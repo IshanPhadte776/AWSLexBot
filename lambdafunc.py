@@ -10,72 +10,6 @@ logger.setLevel(logging.DEBUG)
 dyn_client = boto3.client('dynamodb')
 TABLE_NAME = "HotelBookings"
 
-def safe_int(n):
-    
-    if n is not None:
-        return int(n)
-    return n
-    
-def try_ex(func):
-    try:
-        return func()
-    except KeyError:
-        return None
-        
-def elicit_slot(session_attributes, intent_name, slots, slots_elicit, message):
-    return {
-        'sessionAttributes': session_attributes,
-        'dialogAction' : {
-            'type': 'ElicitSlot',
-            'intentName':intent_name,
-            'slots': slots,
-            'slotToElicit': slots_elicit,
-            'message': message
-        }
-    }
-    
-
-
-def confirm_intent (session_attributes, intent_name, slots, message): 
-    return {
-        'sessionAttributes': session_attributes, 
-        'dialogAction': {
-            'type': 'ConfirmIntent', 
-            'intentName': intent_name, 
-            'slots': slots,
-            'message': message
-        }
-    }
-
-def close (session_attributes, fulfillment_state, message):
-    response = {
-        'sessionAttributes': session_attributes, 
-        'dialogAction': {
-            'type': 'Close',
-            'fulfillmentState': fulfillment_state,
-            'message': message
-        }
-    }
-    
-def delegate (session_attributes, slots):
-    return {
-        'sessionAttributes': session_attributes, 
-        'dialogAction': {
-            'type': 'Delegate',
-            'slots': slots
-        }
-    }
-    
-def build_validation_result(isvalid, violated_slot, message_content):
-    return {
-        'isValid': isvalid,
-        'violatedSlot' : violated_slot,
-        'message': {'contentType' : 'PlainText', 'content': message_content}
-    }
-
-
-
-#Returns if all the slots are validated and have inputs 
 def validate(slots):
 
     valid_cities = ['Toronto','Ottawa','Montreal','Calgary']
@@ -113,88 +47,92 @@ def validate(slots):
 
     return {'isValid': True}
 
-#This function is called 4 times
+
 def lambda_handler(event, context):
-    
-#Come back
+
     slots = event['sessionState']['intent']['slots']
     intent = event['sessionState']['intent']['name']
-    print(event['invocationSource'])
-    print(slots)
-    print(intent)
-    
-    #returns a dic which contain the isValid key and maybe violated Slot
+    print("Start")
+
     validation_result = validate(slots)
-    print(validation_result)
-	#The bot needs to ask for more slots 
+
     if event['invocationSource'] == 'DialogCodeHook':
-        #Missing Slot Value
         if not validation_result['isValid']:
-	#response is a dictionary and has 2 keys, sessionState and intent 
             response = {
                 "sessionState": {
                     "dialogAction": {
-                        #slottoElicit meaning the slot that needs to asked from the user 
                         'slotToElicit': validation_result['violatedSlot'],
-		#chatbot is asking for data from the user 
                         "type":"ElicitSlot"
                     },
                     "intent": {
-		#name of the intent which is being executed rn 
                         'name': intent,
-		#all slots values 
                         'slots' : slots
                     }
                 }
             }
-       #When all userinput is valid 
         else:
             response = {
             "sessionState": {
                 "dialogAction": {
-	#The data provided by the user will be used to complete the intent 
                     "type": "Delegate"
                 },
                 "intent": {
-		#name of the intent which is being executed rn 
-                    'Name':intent,
-		#all slots values 
+                    'name':intent,
                     'slots': slots
-                        
                     }
             
              }
             }
         
-    #All slots are filled 
     if event['invocationSource'] == 'FulfillmentCodeHook':
         
         # Add order in Database
-        
-        print("Hello")
-        
-        response = {
-        "sessionState": {
-            "dialogAction": {
-	#convo is finished
-                "type": "Close"
-            },
-            "intent": {
-                'name':intent,
-                'slots': slots,
-	#The intent was fully processed and all slots were validated 
-                'state':'Fulfilled'
-                
+        id = str(uuid.uuid4())
+        location = str(slots['Location']['value'])
+        checkInDate = str(slots['CheckInDate']['value'])
+        nights = str(slots['Nights']['value'])
+        roomType = str(slots['RoomType']['value'])
+
+        print(type(location))
+        print(type(checkInDate))
+        print(type(nights))
+        print(type(roomType))
+
+
+        try:
+            response = dyn_client.put_item(
+                TableName=TABLE_NAME,
+                Item={
+                    'id': {'S': id},
+                    'Location': {'S': location},
+                    'CheckinDate': {'S': checkInDate},
+                    'Nights': {'S': nights},
+                    'RoomType': {'S': roomType},
+
                 }
-    
-        },
-#Other texts could be used 
-        "messages": [
-            {
-                "contentType": "PlainText",
-                "content": "Thanks, I have placed your reservation"
-            }
-        ]
-    }
+            )
+        except Exception as e:
+            logger.error("Error occurred while adding order to DynamoDB: {}".format(str(e)))
+            raise e
+
+        response = {
+            "sessionState": {
+                "dialogAction": {
+                    "type": "Close"
+                },
+                "intent": {
+                    'name': intent,
+                    'slots': slots,
+                    'state':'Fulfilled'
+                }
+            },
+            "messages": [
+                {
+                    "contentType": "PlainText",
+                    "content": "Thanks, I have placed your reservation"
+                }
+            ]
+        }
+
 
     return response
